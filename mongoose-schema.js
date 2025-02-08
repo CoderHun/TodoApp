@@ -9,4 +9,4 @@ const userSchema = new mongoose.Schema({
 // 2️⃣ User 모델 생성
 const User = mongoose.model("User", userSchema);
 
-module.exports = User;
+module.exports = { User };

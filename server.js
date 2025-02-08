@@ -1,24 +1,24 @@
-const express = require("express");
-const { graphqlHTTP } = require("express-graphql");
-const { buildSchema } = require("graphql");
-const { schema, root } = require("./graphql-schema");
+require("dotenv").config();
+const { createYoga, createSchema } = require("graphql-yoga");
 const connectMongoose = require("./database");
-const cors = require("cors");
+const http = require("http");
+const { typeDefs, resolvers } = require("./graphql-schema");
 
-// 4️⃣ Express 서버 설정
-const app = express();
-app.use(cors()); // CORS 정책 허용
-app.use(
-  "/graphql",
-  graphqlHTTP({
-    schema: schema,
-    rootValue: root,
-    graphiql: true, // GraphiQL UI 활성화
-  })
-);
-
-// 5️⃣ 서버 실행
+// MongoDB 연결
 connectMongoose();
-app.listen(PORT, () => {
-  console.log(`🚀 GraphQL Server running at http://localhost:${process.env.PORT}/graphql`);
+
+// GraphQL 서버 생성
+const yoga = createYoga({
+  schema: createSchema({
+    typeDefs,
+    resolvers,
+  }),
+});
+
+const server = http.createServer(yoga);
+
+// 서버 실행
+const PORT = process.env.PORT || 4000;
+server.listen({ port: PORT }, () => {
+  console.log(`🚀 GraphQL Server running at http://localhost:${PORT}`);
 });
