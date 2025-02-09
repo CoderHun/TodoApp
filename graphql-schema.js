@@ -11,19 +11,22 @@ const typeDefs = `
   type User {
     email: String!
     token: String
+    message: String
   }
 
   type Success {
     success: Boolean!
+    message: String
   }
 
   type Query {
     me: User
+    signIn(email: String!, password: String!): User
   }
 
   type Mutation {
-    signUp(email: String!, password: String!): Success
-    signIn(email: String!, password: String!): User
+    signUp(email: String!, password: String! confirmPassword: String!): Success
+    
   }
 `;
 
@@ -31,34 +34,54 @@ const typeDefs = `
 const resolvers = {
   Mutation: {
     // 회원가입 (signUp)
-    signUp: async (_, { email, password }) => {
+    signUp: async (_, { email, password, confirmPassword }) => {
+      console.log(
+        `request received. email : ${email} password : ${password} confirmPassword : ${confirmPassword}`
+      );
       // 이메일 유효성 검사
       if (!validator.isEmail(email)) {
-        throw new Error("올바른 이메일 형식이 아니에요.");
+        return {
+          success: false,
+          message: "올바른 이메일 형식이 아니에요.",
+        };
       }
       if (!validator.isLength(email, { min: 3, max: 128 })) {
-        throw new Error("이메일 주소는 최대 128자까지 입력 가능해요.");
+        return {
+          success: false,
+          message: "이메일 주소는 최대 128자까지 입력 가능해요.",
+        };
+      }
+      if (password !== confirmPassword) {
+        return {
+          success: false,
+          message: "비밀번호 확인이 일치하지 않아요.",
+        };
       }
 
       // 이미 존재하는 이메일인지 확인
       const existingUser = await User.findOne({ email });
       if (existingUser) {
-        throw new Error("이미 등록된 이메일 주소에요.");
+        return {
+          success: false,
+          message: "이미 등록된 이메일 주소에요.",
+        };
       }
 
       // 비밀번호 유효성 검사
       const isValid = validator.isStrongPassword(password, {
         minLength: 6,
         maxLength: 128,
-        minLowercase: 0,
+        minLowercase: 1,
         minUppercase: 0,
         minNumbers: 1,
         minSymbols: 0,
       });
       if (!isValid) {
-        throw new Error(
-          "비밀번호는 최소 6자리 이상, 숫자와 문자가 포함되어야 합니다."
-        );
+        return {
+          success: false,
+          message:
+            "비밀번호는 최소 6자리 이상, 숫자와 문자가 포함되어야 합니다.",
+        };
       }
 
       try {
@@ -71,19 +94,27 @@ const resolvers = {
         throw new Error("서버 오류가 발생했습니다.");
       }
     },
-
+  },
+  Query: {
     // 로그인 (signIn)
     signIn: async (_, { email, password }) => {
+      console.log(`sign in request - email : ${email}  password : ${password}`);
       try {
         const user = await User.findOne({ email });
         if (!user) {
-          throw new Error("이메일 또는 비밀번호가 일치하지 않아요.");
+          return {
+            email: email,
+            message: "이메일 또는 비밀번호가 일치하지 않아요.",
+          };
         }
 
         // 비밀번호 검증
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-          throw new Error("이메일 또는 비밀번호가 일치하지 않아요.");
+          return {
+            email: email,
+            message: "이메일 또는 비밀번호가 일치하지 않아요.",
+          };
         }
 
         // JWT 생성
@@ -91,13 +122,11 @@ const resolvers = {
           expiresIn: "24h",
         });
 
-        return { email: user.email, token };
+        return { email: user.email, token: token };
       } catch (error) {
         throw new Error("서버 오류가 발생했습니다.");
       }
     },
-  },
-  Query: {
     me: async (_, __, { request }) => {
       try {
         // 요청 헤더에서 토큰 추출

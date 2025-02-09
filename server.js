@@ -13,6 +13,10 @@ const yoga = createYoga({
     typeDefs,
     resolvers,
   }),
+  cors: {
+    origin: "*",
+    credentials: true, // 쿠키 허용
+  },
 });
 
 const server = http.createServer(yoga);
