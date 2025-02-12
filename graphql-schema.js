@@ -1,17 +1,26 @@
 require("dotenv").config();
-const { User } = require("./mongoose-schema");
+const { gql } = require("apollo-server-express");
+const { User, Profile } = require("./mongoose-schema");
 const validator = require("validator");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
 const SECRET_KEY = process.env.JWT_SECRET;
-
 // 🔹 GraphQL 스키마 (typeDefs)
-const typeDefs = `
+const typeDefs = gql`
   type User {
     email: String!
     token: String
     message: String
+  }
+  type Profile {
+    nickname: String!
+    email: String!
+    phoneNumber: String
+    age: Int
+    gender: String
+    address: String
+    profileImage: String
   }
 
   type Success {
@@ -20,15 +29,29 @@ const typeDefs = `
   }
 
   type Query {
-    me: User
+    verifyToken: User
+    getProfile: Profile
     signIn(email: String!, password: String!): User
   }
 
   type Mutation {
-    signUp(email: String!, password: String! confirmPassword: String!): Success
-    
+    signUp(email: String!, password: String!, confirmPassword: String!): Success
+    updateProfile(
+      nickname: String!
+      phoneNumber: String
+      age: Int
+      gender: String
+      address: String
+    ): Profile
   }
 `;
+
+function readToken(req) {
+  const authToken = req?.headers?.authorization;
+  if (!authToken) throw new Error("토큰이 없습니다.");
+  const token = authToken.split(" ")[1];
+  return token;
+}
 
 // 🔹 GraphQL 리졸버 (resolvers)
 const resolvers = {
@@ -88,10 +111,67 @@ const resolvers = {
         // 비밀번호 해싱
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = new User({ email, password: hashedPassword });
+        // 프로필 생성
+        userProfile = new Profile({
+          userId: newUser._id,
+          nickname: "",
+          phoneNumber: "",
+          age: "",
+          gender: "Hide",
+          address: "",
+          profileImage: "",
+        });
         await newUser.save();
-        return { success: true };
+        await userProfile.save();
+        return { success: true, message: "회원가입이 완료되었습니다." };
       } catch (error) {
-        throw new Error("서버 오류가 발생했습니다.");
+        throw new Error(error.message);
+      }
+    },
+    updateProfile: async (
+      _,
+      { nickname, phoneNumber, age, gender, address },
+      { req }
+    ) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+
+        let userProfile = await Profile.findOne({ userId: user._id });
+        // 🔹 입력값 검증
+        if (!nickname || !validator.isLength(nickname, { min: 2, max: 30 })) {
+          throw new Error(
+            "닉네임은 최소 2자 이상, 최대 30자 이하로 입력해야 합니다."
+          );
+        }
+
+        if (phoneNumber && !validator.isMobilePhone(phoneNumber, "ko-KR")) {
+          throw new Error("올바른 전화번호 형식이 아닙니다.");
+        }
+
+        if (age !== null && (typeof age !== "number" || age < 0 || age > 150)) {
+          throw new Error("나이는 0~150 사이의 숫자로 입력해야 합니다.");
+        }
+
+        if (gender && !["Male", "Female"].includes(gender)) {
+          throw new Error('성별은 "Male" 또는 "Female" 중 하나여야 합니다.');
+        }
+
+        if (address && !validator.isLength(address, { max: 100 })) {
+          throw new Error("주소는 최대 100자까지 입력 가능합니다.");
+        }
+        userProfile.nickname = nickname;
+        userProfile.phoneNumber = phoneNumber;
+        userProfile.age = age;
+        userProfile.gender = gender;
+        userProfile.address = address;
+
+        await userProfile.save();
+        return userProfile;
+      } catch (error) {
+        throw new Error("프로필 업데이트 실패: " + error.message);
       }
     },
   },
@@ -127,23 +207,56 @@ const resolvers = {
         throw new Error("서버 오류가 발생했습니다.");
       }
     },
-    me: async (_, __, { request }) => {
+    verifyToken: async (_, __, { req }) => {
       try {
-        // 요청 헤더에서 토큰 추출
-        const token = request.headers.authorization;
-        if (!token) {
-          throw new Error("정상적으로 로그인되지 않았어요");
-        }
-
+        const token = readToken(req);
         // 토큰 검증
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = jwt.verify(token, SECRET_KEY);
+        if (!decoded) {
+          console.log("토큰 인증 실패.");
+          throw new Error("토큰 인증 실패.");
+        }
         const user = await User.findOne({ email: decoded.email });
         if (!user) {
+          console.log("사용자를 찾을 수 없습니다.");
           throw new Error("사용자를 찾을 수 없습니다.");
         }
-        return user;
+        return { email: decoded.email };
       } catch (error) {
+        console.log("서버 오류가 발생했습니다.");
         throw new Error("서버 오류가 발생했습니다.");
+      }
+    },
+    getProfile: async (_, __, { req }) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (!decoded) {
+          console.log("토큰 인증 실패.");
+          throw new Error("토큰 인증 실패.");
+        }
+        const user = await User.findOne({ email: decoded.email.trim() });
+        if (!user) {
+          console.log("사용자를 찾을 수 없습니다.", decoded.email);
+          throw new Error("사용자를 찾을 수 없습니다.");
+        }
+        const userProfile = await Profile.findOne({ userId: user._id });
+        if (!userProfile) {
+          console.log("프로필을 찾을 수 없습니다.");
+          throw new Error("프로필을 찾을 수 없습니다.");
+        }
+        return {
+          nickname: userProfile.nickname,
+          email: decoded.email,
+          phoneNumber: userProfile.phoneNumber || "",
+          age: userProfile.age || null,
+          gender: userProfile.gender || "",
+          address: userProfile.address || "",
+          profileImage: userProfile.profileImage || null,
+        };
+      } catch (error) {
+        console.log("프로필 정보 불러오기 실패: " + error.message);
+        throw new Error("프로필 정보 불러오기 실패: " + error.message);
       }
     },
   },
