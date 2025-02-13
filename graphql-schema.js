@@ -1,4 +1,6 @@
 require("dotenv").config();
+const { pipeline } = require("stream/promises");
+const fs = require("fs");
 const { gql } = require("apollo-server-express");
 const { User, Profile } = require("./mongoose-schema");
 const validator = require("validator");
@@ -8,6 +10,8 @@ const jwt = require("jsonwebtoken");
 const SECRET_KEY = process.env.JWT_SECRET;
 // 🔹 GraphQL 스키마 (typeDefs)
 const typeDefs = gql`
+  scalar Upload
+
   type User {
     email: String!
     token: String
@@ -43,6 +47,7 @@ const typeDefs = gql`
       gender: String
       address: String
     ): Profile
+    uploadProfileImage(file: Upload!): String
   }
 `;
 
@@ -102,8 +107,7 @@ const resolvers = {
       if (!isValid) {
         return {
           success: false,
-          message:
-            "비밀번호는 최소 6자리 이상, 숫자와 문자가 포함되어야 합니다.",
+          message: "비밀번호는 최소 6자리 이상, 숫자와 문자가 포함되어야 합니다.",
         };
       }
 
@@ -128,11 +132,7 @@ const resolvers = {
         throw new Error(error.message);
       }
     },
-    updateProfile: async (
-      _,
-      { nickname, phoneNumber, age, gender, address },
-      { req }
-    ) => {
+    updateProfile: async (_, { nickname, phoneNumber, age, gender, address }, { req }) => {
       try {
         const token = readToken(req);
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -142,9 +142,7 @@ const resolvers = {
         let userProfile = await Profile.findOne({ userId: user._id });
         // 🔹 입력값 검증
         if (!nickname || !validator.isLength(nickname, { min: 2, max: 30 })) {
-          throw new Error(
-            "닉네임은 최소 2자 이상, 최대 30자 이하로 입력해야 합니다."
-          );
+          throw new Error("닉네임은 최소 2자 이상, 최대 30자 이하로 입력해야 합니다.");
         }
 
         if (phoneNumber && !validator.isMobilePhone(phoneNumber, "ko-KR")) {
@@ -174,6 +172,30 @@ const resolvers = {
         throw new Error("프로필 업데이트 실패: " + error.message);
       }
     },
+    uploadProfileImage: async (_, { file }, { req }) => {
+      console.log("Image upload request received");
+      const token = readToken(req);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      if (!decoded) throw new Error("유효하지 않은 토큰입니다.");
+
+      const user = await User.findOne({ email: decoded.email });
+      if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+
+      const profile = await Profile.findOne({ userId: user._id });
+      if (!profile) throw new Error("사용자를 찾을 수 없습니다.");
+      try {
+        const { createReadStream, filename } = await file;
+        const filePath = `./uploads/${Date.now()}-${filename}`;
+        await pipeline(createReadStream(), fs.createWriteStream(filePath));
+        profile.profileImage = filePath;
+        await profile.save();
+
+        return { profileImage: profile.profileImage };
+      } catch (error) {
+        console.log(error);
+        throw new Error("Serverside error");
+      }
+    },
   },
   Query: {
     // 로그인 (signIn)
@@ -201,9 +223,10 @@ const resolvers = {
         const token = jwt.sign({ email: user.email }, SECRET_KEY, {
           expiresIn: "24h",
         });
-
+        console.log("Login token created : ", token);
         return { email: user.email, token: token };
       } catch (error) {
+        console.log(error?.message);
         throw new Error("서버 오류가 발생했습니다.");
       }
     },

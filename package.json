@@ -20,24 +20,20 @@
     "url": "https://github.com/CoderHun/TodoApp/issues"
   },
   "homepage": "https://github.com/CoderHun/TodoApp#readme",
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
   "dependencies": {
-    "apollo-server": "^3.13.0",
     "apollo-server-express": "^3.13.0",
     "bcrypt": "^5.1.1",
-    "body-parser": "^1.20.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "express-fileupload": "^1.5.1",
-    "express-graphql": "^0.12.0",
-    "graphql": "^15.10.1",
-    "graphql-yoga": "^5.11.0",
+    "graphql": "^16.10.0",
+    "graphql-upload": "^16.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.10.0",
     "multer": "^1.4.5-lts.1",
     "validator": "^13.12.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.9"
   }
 }
