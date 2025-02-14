@@ -2,7 +2,7 @@ require("dotenv").config();
 const { pipeline } = require("stream/promises");
 const fs = require("fs");
 const { gql } = require("apollo-server-express");
-const { User, Profile } = require("./mongoose-schema");
+const { User, Profile, Schedule } = require("./mongoose-schema");
 const validator = require("validator");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -30,10 +30,19 @@ const typeDefs = gql`
     message: String
   }
 
+  type Schedule {
+    work: String!
+    place: String!
+    date: String!
+    startTime: String!
+    endTime: String!
+  }
+
   type Query {
     verifyToken: User
     getProfile: Profile
     signIn(email: String!, password: String!): User
+    getSchedule: [Schedule!]!
   }
 
   type Mutation {
@@ -45,6 +54,13 @@ const typeDefs = gql`
       gender: String
       address: String
     ): Profile
+    createSchedule(
+      work: String!
+      place: String!
+      date: String!
+      startTime: String!
+      endTime: String!
+    ): Success
   }
 `;
 
@@ -123,8 +139,13 @@ const resolvers = {
           address: "",
           profileImage: "",
         });
+        schedule = new Schedule({
+          userId: newUser._id,
+          schedules: [],
+        });
         await newUser.save();
         await userProfile.save();
+        await schedule.save();
         return { success: true, message: "회원가입이 완료되었습니다." };
       } catch (error) {
         throw new Error(error.message);
@@ -176,6 +197,32 @@ const resolvers = {
         throw new Error("프로필 업데이트 실패: " + error.message);
       }
     },
+    createSchedule: async (
+      _,
+      { work, place, date, startTime, endTime },
+      { req }
+    ) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+
+        let schedule = await Schedule.findOne({ userId: user._id });
+        if (!schedule) throw new Error("사용자를 찾을 수 없습니다.");
+        schedule.schedules.push({
+          work: work,
+          place: lace,
+          date: new Date(date),
+          startTime: new Date(startTime),
+          endTime: new Date(endTime),
+        });
+        await schedule.save();
+        return { success: true, message: "일정이 저장되었습니다" };
+      } catch (error) {
+        throw new Error("❌ 일정 저장 실패: ");
+      }
+    },
   },
   Query: {
     // 로그인 (signIn)
@@ -203,7 +250,7 @@ const resolvers = {
         const token = jwt.sign({ email: user.email }, SECRET_KEY, {
           expiresIn: "24h",
         });
-        console.log("Login token created : ", token);
+        console.log("Login token created");
         return { email: user.email, token: token };
       } catch (error) {
         console.log(error?.message);
@@ -260,6 +307,29 @@ const resolvers = {
       } catch (error) {
         console.log("프로필 정보 불러오기 실패: " + error.message);
         throw new Error("프로필 정보 불러오기 실패: " + error.message);
+      }
+    },
+    getSchedule: async (_, __, { req }) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (!decoded) {
+          console.log("토큰 인증 실패.");
+          throw new Error("토큰 인증 실패.");
+        }
+        const user = await User.findOne({ email: decoded.email.trim() });
+        if (!user) {
+          console.log("사용자를 찾을 수 없습니다.", decoded.email);
+          throw new Error("사용자를 찾을 수 없습니다.");
+        }
+        const userSchedule = await Schedule.findOne({ userId: user._id });
+        const schedules = userSchedule.schedules.map(
+          ({ _id, ...rest }) => rest
+        );
+        console.log(`return schedules`);
+        return schedules;
+      } catch (error) {
+        throw new Error("❌ 일정 조회 실패: " + error.message);
       }
     },
   },

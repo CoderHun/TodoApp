@@ -16,8 +16,22 @@ const profileSchema = new mongoose.Schema({
   profileImage: { type: String },
 });
 
+const scheduleSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // ✅ 사용자 ID
+  schedules: [
+    {
+      _id: { type: mongoose.Schema.Types.ObjectId, auto: true },
+      work: { type: String, required: true },
+      place: { type: String, required: true },
+      date: { type: Date, required: true },
+      startTime: { type: Date, required: true }, // ✅ 필드명 소문자로 변경
+      endTime: { type: Date, required: true },
+    },
+  ],
+});
+
 // 2️⃣ User 모델 생성
 const User = mongoose.model("User", userSchema);
 const Profile = mongoose.model("Profile", profileSchema);
-
-module.exports = { User, Profile };
+const Schedule = mongoose.model("Schedule", scheduleSchema);
+module.exports = { User, Profile, Schedule };
