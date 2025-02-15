@@ -26,6 +26,7 @@ const scheduleSchema = new mongoose.Schema({
       date: { type: Date, required: true },
       startTime: { type: Date, required: true }, // ✅ 필드명 소문자로 변경
       endTime: { type: Date, required: true },
+      key: { type: String, required: true },
     },
   ],
 });

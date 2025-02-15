@@ -6,6 +6,14 @@ const { User, Profile, Schedule } = require("./mongoose-schema");
 const validator = require("validator");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { v4: uuidv4 } = require("uuid");
+
+// Node.js 환경에서 `globalThis.crypto` 설정
+// if (!globalThis.crypto) {
+//   globalThis.crypto = {
+//     getRandomValues: (arr) => crypto.randomFillSync(arr),
+//   };
+// }
 
 const SECRET_KEY = process.env.JWT_SECRET;
 // 🔹 GraphQL 스키마 (typeDefs)
@@ -36,6 +44,7 @@ const typeDefs = gql`
     date: String!
     startTime: String!
     endTime: String!
+    key: String!
   }
 
   type Query {
@@ -53,6 +62,7 @@ const typeDefs = gql`
       age: Int
       gender: String
       address: String
+      key: String
     ): Profile
     createSchedule(
       work: String!
@@ -61,6 +71,15 @@ const typeDefs = gql`
       startTime: String!
       endTime: String!
     ): Success
+    updateSchedule(
+      work: String!
+      place: String!
+      date: String!
+      startTime: String!
+      endTime: String!
+      key: String!
+    ): Success
+    deleteSchedule(key: String!): Success
   }
 `;
 
@@ -212,15 +231,72 @@ const resolvers = {
         if (!schedule) throw new Error("사용자를 찾을 수 없습니다.");
         schedule.schedules.push({
           work: work,
-          place: lace,
+          place: place,
           date: new Date(date),
           startTime: new Date(startTime),
           endTime: new Date(endTime),
+          key: uuidv4(),
         });
         await schedule.save();
+        console.log("new schedule saved");
         return { success: true, message: "일정이 저장되었습니다" };
       } catch (error) {
+        console.log(error.message);
         throw new Error("❌ 일정 저장 실패: ");
+      }
+    },
+    updateSchedule: async (
+      _,
+      { work, place, date, startTime, endTime, key },
+      { req }
+    ) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+
+        let schedule = await Schedule.findOne({ userId: user._id });
+
+        if (!schedule) throw new Error("사용자를 찾을 수 없습니다.");
+        const newSchedule = {
+          work,
+          place,
+          date,
+          startTime,
+          endTime,
+          key,
+        };
+        const results = await Schedule.updateOne(
+          { userId: user._id, "schedules.key": key }, // 특정 key를 가진 객체 찾기
+          { $set: { "schedules.$": newSchedule } } // 해당 객체를 newObject로 교체
+        );
+        console.log("일정 수정 성공");
+        return { success: true, message: "일정이 수정되었습니다" };
+      } catch (error) {
+        console.log(error.message);
+        throw new Error("❌ 일정 수정 실패: ");
+      }
+    },
+    deleteSchedule: async (_, { key }, { req }) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+
+        let schedule = await Schedule.findOne({ userId: user._id });
+
+        if (!schedule) throw new Error("사용자를 찾을 수 없습니다.");
+
+        const results = await Schedule.updateOne(
+          { userId: user._id }, // 사용자 ID 조건
+          { $pull: { schedules: { key: key } } } // key가 일치하는 객체 삭제
+        );
+        return { success: true, message: "일정이 삭제되었습니다" };
+      } catch (error) {
+        console.log(error.message);
+        throw new Error("❌ 일정 삭제 실패: ");
       }
     },
   },
@@ -322,11 +398,12 @@ const resolvers = {
           console.log("사용자를 찾을 수 없습니다.", decoded.email);
           throw new Error("사용자를 찾을 수 없습니다.");
         }
-        const userSchedule = await Schedule.findOne({ userId: user._id });
+        const userSchedule = await Schedule.findOne({
+          userId: user._id,
+        }).lean();
         const schedules = userSchedule.schedules.map(
           ({ _id, ...rest }) => rest
         );
-        console.log(`return schedules`);
         return schedules;
       } catch (error) {
         throw new Error("❌ 일정 조회 실패: " + error.message);
