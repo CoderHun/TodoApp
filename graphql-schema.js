@@ -2,7 +2,7 @@ require("dotenv").config();
 const { pipeline } = require("stream/promises");
 const fs = require("fs");
 const { gql } = require("apollo-server-express");
-const { User, Profile, Schedule } = require("./mongoose-schema");
+const { User, Profile, Schedule, Friends } = require("./mongoose-schema");
 const validator = require("validator");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -46,12 +46,20 @@ const typeDefs = gql`
     endTime: String!
     key: String!
   }
+  type BasicFriendInfo {
+    nickname: String!
+    profileImage: String!
+  }
 
   type Query {
     verifyToken: User
     getProfile: Profile
     signIn(email: String!, password: String!): User
     getSchedule: [Schedule!]!
+    findUserFromEmail(email: String!): BasicFriendInfo
+    getFriendRequest: [BasicFriendInfo!]!
+    getFriendList: [BasicFriendInfo!]!
+    getFriendSchedule(nickname: String!): [Schedule!]!
   }
 
   type Mutation {
@@ -79,7 +87,10 @@ const typeDefs = gql`
       endTime: String!
       key: String!
     ): Success
+    addFriend(email: String!): Success
     deleteSchedule(key: String!): Success
+    acceptFriendRequest(nickname: String!): Success
+    denyFriendRequest(nickname: String!): Success
   }
 `;
 
@@ -149,7 +160,7 @@ const resolvers = {
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = new User({ email, password: hashedPassword });
         // 프로필 생성
-        userProfile = new Profile({
+        const userProfile = new Profile({
           userId: newUser._id,
           nickname: "",
           phoneNumber: "",
@@ -158,13 +169,18 @@ const resolvers = {
           address: "",
           profileImage: "",
         });
-        schedule = new Schedule({
+        const schedule = new Schedule({
           userId: newUser._id,
           schedules: [],
+        });
+        const friend = new Friends({
+          userId: newUser._id,
+          friendsId: [],
         });
         await newUser.save();
         await userProfile.save();
         await schedule.save();
+        await friend.save();
         return { success: true, message: "회원가입이 완료되었습니다." };
       } catch (error) {
         throw new Error(error.message);
@@ -299,6 +315,90 @@ const resolvers = {
         throw new Error("❌ 일정 삭제 실패: ");
       }
     },
+    addFriend: async (_, { email }, { req }) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+        if (email === decoded.email)
+          return {
+            success: true,
+            message: "자기 자신과 친구를 맺을 수 없습니다",
+          };
+        const targetUser = await User.findOne({ email: email });
+        if (!targetUser) throw new Error("사용자를 찾을 수 없습니다.");
+
+        const isExist = await Friends.findOne({
+          userId: targetUser._id,
+          friendsId: { $elemMatch: { userId: user._id } },
+        });
+        if (isExist) {
+          return { success: true, message: "해당 유저와 이미 친구입니다" };
+        } else {
+          const results = await Friends.updateOne(
+            { userId: targetUser._id }, // 사용자 ID 조건
+            { $addToSet: { requestsId: { userId: user._id } } }
+          );
+          if (results)
+            return { success: true, message: "친구 신청이 완료되었습니다" };
+          else return { success: true, message: "이미 신청한 상태입니다" };
+        }
+      } catch (error) {
+        console.log(error.message);
+        throw new Error("친구 추가 실패");
+      }
+    },
+    acceptFriendRequest: async (_, { nickname }, { req }) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+        const targetUserProfile = await Profile.findOne({ nickname: nickname });
+        if (!targetUserProfile) throw new Error("대상을 찾을 수 없습니다.");
+        const targetUserId = targetUserProfile.userId;
+        await Friends.updateOne(
+          { userId: user._id }, // 해당 userId를 가진 문서를 찾음
+          {
+            $pull: { requestsId: { userId: targetUserId } }, // ✅ requestsId 배열에서 targetId 제거
+            $addToSet: { friendsId: { userId: targetUserId } }, // ✅ friendsId 배열에 targetId 추가 (중복 방지)
+          }
+        );
+        await Friends.updateOne(
+          { userId: targetUserId }, // 해당 userId를 가진 문서를 찾음
+          {
+            $addToSet: { friendsId: { userId: user._id } }, // ✅ friendsId 배열에 targetId 추가 (중복 방지)
+            $pull: { requestsId: { userId: user._id } }, // ✅ requestsId 배열에서 targetId 제거
+          }
+        );
+        return { success: true, message: "친구 요청을 수락했습니다" };
+      } catch (error) {
+        console.log(error.message);
+        throw new Error("친구 추가 실패");
+      }
+    },
+    denyFriendRequest: async (_, { nickname }, { req }) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+        const targetUserProfile = await Profile.findOne({ nickname: nickname });
+        if (!targetUserProfile) throw new Error("대상을 찾을 수 없습니다.");
+        const targetUserId = targetUserProfile.userId;
+        await Friends.updateOne(
+          { userId: user._id }, // 해당 userId를 가진 문서를 찾음
+          {
+            $pull: { requestsId: { userId: targetUserId } }, // ✅ requestsId 배열에서 targetId 제거
+          }
+        );
+        return { success: true, message: "친구 요청을 수락했습니다" };
+      } catch (error) {
+        console.log(error.message);
+        throw new Error("친구 추가 실패");
+      }
+    },
   },
   Query: {
     // 로그인 (signIn)
@@ -327,6 +427,15 @@ const resolvers = {
           expiresIn: "24h",
         });
         console.log("Login token created");
+        let friend = await Friends.findOne({ userId: user._id });
+        if (!friend) {
+          const friend = new Friends({
+            userId: user._id,
+            friendsId: [],
+          });
+          await friend.save();
+          return { email: user.email, token: token };
+        }
         return { email: user.email, token: token };
       } catch (error) {
         console.log(error?.message);
@@ -361,6 +470,7 @@ const resolvers = {
           console.log("토큰 인증 실패.");
           throw new Error("토큰 인증 실패.");
         }
+        console.log(`get profile : ${decoded.email}`);
         const user = await User.findOne({ email: decoded.email.trim() });
         if (!user) {
           console.log("사용자를 찾을 수 없습니다.", decoded.email);
@@ -407,6 +517,96 @@ const resolvers = {
         return schedules;
       } catch (error) {
         throw new Error("❌ 일정 조회 실패: " + error.message);
+      }
+    },
+    getFriendSchedule: async (_, { nickname }, { req }) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email.trim() });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+        const targetUserProfile = await Profile.findOne({ nickname: nickname });
+        const targetUserId = targetUserProfile.userId;
+
+        const isExist = await Friends.findOne({
+          userId: user._id,
+          friendsId: { $elemMatch: { userId: targetUserId } }, // ✅ 특정 userId가 friendsId 배열 내에 있는지 확인
+        });
+        if (isExist) {
+          const userSchedule = await Schedule.findOne({
+            userId: targetUserId,
+          }).lean();
+          const schedules = userSchedule.schedules.map(
+            ({ _id, ...rest }) => rest
+          );
+          return schedules;
+        } else {
+          throw new Error("사용자를 찾을 수 없습니다.");
+        }
+      } catch (error) {
+        throw new Error("❌ 친구 일정 조회 실패: " + error.message);
+      }
+    },
+    findUserFromEmail: async (_, { email }) => {
+      try {
+        const user = await User.findOne({ email: email });
+        if (!user) {
+          throw new Error("사용자를 찾을 수 없습니다.");
+        }
+        const profile = await Profile.findOne({ userId: user._id });
+        if (!profile) {
+          throw new Error("사용자를 찾을 수 없습니다.");
+        }
+        return {
+          nickname: profile.nickname,
+          profileImage: profile.profileImage,
+        };
+      } catch (error) {
+        throw new Error("❌ 조회 실패: " + error.message);
+      }
+    },
+    getFriendRequest: async (_, __, { req }) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email.trim() });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+        const friend = await Friends.findOne({ userId: user._id });
+
+        const requests = [];
+        for (const item of friend.requestsId) {
+          const targetUser = await Profile.findOne({ userId: item.userId });
+          requests.push({
+            nickname: targetUser?.nickname,
+            profileImage: targetUser?.profileImage,
+          });
+        }
+        return requests;
+      } catch (error) {
+        console.log(error.message);
+        throw new Error("친구 요청 불러오기 실패");
+      }
+    },
+    getFriendList: async (_, __, { req }) => {
+      try {
+        const token = readToken(req);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findOne({ email: decoded.email.trim() });
+        if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+        const friend = await Friends.findOne({ userId: user._id });
+
+        const friendsList = [];
+        for (const item of friend.friendsId) {
+          const targetUser = await Profile.findOne({ userId: item.userId });
+          friendsList.push({
+            nickname: targetUser?.nickname,
+            profileImage: targetUser?.profileImage,
+          });
+        }
+        return friendsList;
+      } catch (error) {
+        console.log(error.message);
+        throw new Error("친구 요청 불러오기 실패");
       }
     },
   },

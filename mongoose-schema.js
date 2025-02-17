@@ -31,8 +31,31 @@ const scheduleSchema = new mongoose.Schema({
   ],
 });
 
+const friendSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // ✅ 사용자 ID
+  friendsId: [
+    {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      _id: false,
+    },
+  ],
+  requestsId: [
+    {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      _id: false,
+    },
+  ],
+});
+
 // 2️⃣ User 모델 생성
 const User = mongoose.model("User", userSchema);
 const Profile = mongoose.model("Profile", profileSchema);
 const Schedule = mongoose.model("Schedule", scheduleSchema);
-module.exports = { User, Profile, Schedule };
+const Friends = mongoose.model("Friend", friendSchema);
+module.exports = { User, Profile, Schedule, Friends };
